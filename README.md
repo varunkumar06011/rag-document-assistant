@@ -1,3 +1,14 @@
+---
+title: Rag Document Assistant
+emoji: 🚀
+colorFrom: green
+colorTo: blue
+sdk: docker
+pinned: false
+license: mit
+short_description: RAG assistant for querying PDF and DOCX documents
+---
+
 # 📄 RAG Document Assistant
 
 A **Retrieval-Augmented Generation (RAG)** system that allows users to upload **PDF documents** and ask natural language questions.
