@@ -1,15 +1,6 @@
 """
-app.py — Streamlit-only RAG Document Assistant
-
-Deployable on Streamlit Cloud (no FastAPI required)
-
-Features:
-- Drag and drop document upload
-- Chat interface
-- Message history
-- Source citations
-- FAISS vector search
-- Groq LLaMA3 model
+Streamlit RAG Document Assistant
+Works on Streamlit Cloud without FastAPI
 """
 
 import streamlit as st
@@ -23,7 +14,9 @@ from langchain_groq import ChatGroq
 from langchain.chains import RetrievalQA
 
 
-# ── Page Config ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Page configuration
+# ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="RAG Document Assistant",
     page_icon="📄",
@@ -31,7 +24,9 @@ st.set_page_config(
 )
 
 
-# ── Session State ───────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Session State
+# ─────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -39,7 +34,9 @@ if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
 
 
-# ── Sidebar ─────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Sidebar
+# ─────────────────────────────────────────────────────────────
 with st.sidebar:
 
     st.title("📄 RAG Assistant")
@@ -47,13 +44,11 @@ with st.sidebar:
 
     st.success("🟢 System Ready")
 
-    st.markdown("### 📁 Upload Document")
-    st.markdown("Supports PDF files")
+    st.markdown("### Upload PDF Document")
 
     uploaded_file = st.file_uploader(
-        "Drop your document here",
-        type=["pdf"],
-        label_visibility="collapsed"
+        "Drop your PDF here",
+        type=["pdf"]
     )
 
     if uploaded_file:
@@ -62,9 +57,9 @@ with st.sidebar:
 
             with tempfile.NamedTemporaryFile(delete=False) as tmp:
                 tmp.write(uploaded_file.read())
-                path = tmp.name
+                file_path = tmp.name
 
-            loader = PyPDFLoader(path)
+            loader = PyPDFLoader(file_path)
             docs = loader.load()
 
             splitter = RecursiveCharacterTextSplitter(
@@ -82,45 +77,40 @@ with st.sidebar:
 
             st.session_state.vectorstore = vectorstore
 
-            st.success(f"Stored {len(chunks)} chunks!")
+            st.success(f"{len(chunks)} chunks created")
 
     st.markdown("---")
 
-    st.markdown("### ⚙️ System Settings")
-
-    st.markdown("""
-| Setting | Value |
-|--------|------|
-| LLM | LLaMA3 8B (Groq) |
-| Embeddings | MiniLM-L6-v2 |
-| Chunk Size | 500 |
-| Retrieval | FAISS |
-""")
-
-    if st.button("🗑 Clear Chat", use_container_width=True):
+    if st.button("Clear Chat"):
         st.session_state.messages = []
         st.rerun()
 
 
-# ── Main Chat UI ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Main UI
+# ─────────────────────────────────────────────────────────────
 st.title("💬 Chat with Your Documents")
-st.markdown("Upload a document in the sidebar, then ask questions below.")
+
+st.write("Upload a document in the sidebar and ask questions.")
 
 
-# Show chat history
-for msg in st.session_state.messages:
+# Display previous chat
+for message in st.session_state.messages:
 
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-        if msg["role"] == "assistant" and msg.get("sources"):
-            with st.expander("📎 Sources"):
-                for s in msg["sources"]:
-                    st.markdown(f"> {s}")
+        if message["role"] == "assistant" and "sources" in message:
+            with st.expander("Sources"):
+                for src in message["sources"]:
+                    st.markdown(src)
 
 
-# ── Chat Input ───────────────────────────────────────────────
-if question := st.chat_input("Ask a question about your document..."):
+# Chat input
+question = st.chat_input("Ask a question about your document")
+
+
+if question:
 
     st.session_state.messages.append({
         "role": "user",
@@ -132,19 +122,13 @@ if question := st.chat_input("Ask a question about your document..."):
 
     with st.chat_message("assistant"):
 
-        if not st.session_state.vectorstore:
+        if st.session_state.vectorstore is None:
 
-            err = "⚠️ Please upload a document first."
-            st.error(err)
-
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": err
-            })
+            st.error("Please upload a document first.")
 
         else:
 
-            with st.spinner("Searching document..."):
+            with st.spinner("Generating answer..."):
 
                 llm = ChatGroq(
                     groq_api_key=st.secrets["GROQ_API_KEY"],
@@ -170,13 +154,12 @@ if question := st.chat_input("Ask a question about your document..."):
                 st.markdown(answer)
 
                 if sources:
-                    with st.expander(f"📎 Sources ({len(sources)})"):
+                    with st.expander("Sources"):
                         for s in sources:
-                            st.markdown(f"> {s}")
+                            st.markdown(s)
 
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": answer,
                     "sources": sources
                 })
-```
