@@ -18,7 +18,7 @@ import tempfile
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from langchain.chains import RetrievalQA
 
@@ -30,12 +30,13 @@ st.set_page_config(
     layout="wide"
 )
 
+
 # ── Session State ───────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "retriever" not in st.session_state:
-    st.session_state.retriever = None
+if "vectorstore" not in st.session_state:
+    st.session_state.vectorstore = None
 
 
 # ── Sidebar ─────────────────────────────────────────────────
@@ -79,7 +80,7 @@ with st.sidebar:
 
             vectorstore = FAISS.from_documents(chunks, embeddings)
 
-            st.session_state.retriever = vectorstore.as_retriever()
+            st.session_state.vectorstore = vectorstore
 
             st.success(f"Stored {len(chunks)} chunks!")
 
@@ -103,7 +104,6 @@ with st.sidebar:
 
 # ── Main Chat UI ─────────────────────────────────────────────
 st.title("💬 Chat with Your Documents")
-
 st.markdown("Upload a document in the sidebar, then ask questions below.")
 
 
@@ -132,7 +132,7 @@ if question := st.chat_input("Ask a question about your document..."):
 
     with st.chat_message("assistant"):
 
-        if not st.session_state.retriever:
+        if not st.session_state.vectorstore:
 
             err = "⚠️ Please upload a document first."
             st.error(err)
@@ -151,13 +151,15 @@ if question := st.chat_input("Ask a question about your document..."):
                     model_name="llama3-8b-8192"
                 )
 
+                retriever = st.session_state.vectorstore.as_retriever()
+
                 qa = RetrievalQA.from_chain_type(
                     llm=llm,
-                    retriever=st.session_state.retriever,
+                    retriever=retriever,
                     return_source_documents=True
                 )
 
-                result = qa({"query": question})
+                result = qa.invoke({"query": question})
 
                 answer = result["result"]
 
