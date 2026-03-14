@@ -1,208 +1,181 @@
+```python
 """
-app.py — Phase 4b: Streamlit Chat UI
+app.py — Streamlit-only RAG Document Assistant
 
-Run locally:
-  streamlit run app.py
+Deployable on Streamlit Cloud (no FastAPI required)
 
 Features:
-  - Drag-and-drop document upload
-  - Chat interface with message history
-  - Source citations expandable panel
-  - System stats sidebar
-  - Chunk count and model info display
+- Drag and drop document upload
+- Chat interface
+- Message history
+- Source citations
+- FAISS vector search
+- Groq LLaMA3 model
 """
 
 import streamlit as st
+import tempfile
 
-import json
-from pathlib import Path
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
+from langchain.chains import RetrievalQA
 
-# ── Page config ───────────────────────────────────────────────────
+
+# ── Page Config ─────────────────────────────────────────────
 st.set_page_config(
     page_title="RAG Document Assistant",
     page_icon="📄",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    layout="wide"
 )
 
-# ── API base URL (FastAPI backend) ────────────────────────────────
-API_URL = "http://localhost:8000"
-
-
-# ── Helper: call the API ──────────────────────────────────────────
-def api_upload(file_bytes: bytes, filename: str) -> dict:
-    response = requests.post(
-        f"{API_URL}/upload",
-        files={"file": (filename, file_bytes, "application/octet-stream")},
-        timeout=120,
-    )
-    response.raise_for_status()
-    return response.json()
-
-
-def api_query(question: str) -> dict:
-    response = requests.post(
-        f"{API_URL}/query",
-        json={"question": question},
-        timeout=60,
-    )
-    response.raise_for_status()
-    return response.json()
-
-
-def api_list_documents() -> list:
-    response = requests.get(f"{API_URL}/documents", timeout=10)
-    response.raise_for_status()
-    return response.json().get("documents", [])
-
-
-def api_delete_document(filename: str) -> bool:
-    response = requests.delete(f"{API_URL}/documents/{filename}", timeout=10)
-    return response.status_code == 200
-
-
-def check_api_health() -> bool:
-    try:
-        r = requests.get(f"{API_URL}/health", timeout=3)
-        return r.status_code == 200
-    except Exception:
-        return False
-
-
-# ── Session state init ────────────────────────────────────────────
+# ── Session State ───────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+if "retriever" not in st.session_state:
+    st.session_state.retriever = None
 
-# ── Sidebar ───────────────────────────────────────────────────────
+
+# ── Sidebar ─────────────────────────────────────────────────
 with st.sidebar:
+
     st.title("📄 RAG Assistant")
     st.markdown("---")
 
-    # API health indicator
-    if check_api_health():
-        st.success("🟢 API connected")
-    else:
-        st.error("🔴 API offline — run: `uvicorn src.api:app --reload`")
+    st.success("🟢 System Ready")
 
-    st.markdown("### 📁 Upload Documents")
-    st.markdown("Supports PDF and DOCX files")
+    st.markdown("### 📁 Upload Document")
+    st.markdown("Supports PDF files")
 
     uploaded_file = st.file_uploader(
         "Drop your document here",
-        type=["pdf", "docx"],
-        label_visibility="collapsed",
+        type=["pdf"],
+        label_visibility="collapsed"
     )
 
     if uploaded_file:
-        if st.button("⬆️ Ingest Document", use_container_width=True, type="primary"):
-            with st.spinner(f"Processing {uploaded_file.name}..."):
-                try:
-                    result = api_upload(uploaded_file.read(), uploaded_file.name)
-                    st.success(f"✅ {result['chunks_stored']} chunks stored!")
-                    st.json(result)
-                except Exception as e:
-                    st.error(f"Upload failed: {e}")
+
+        with st.spinner("Processing document..."):
+
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp.write(uploaded_file.read())
+                path = tmp.name
+
+            loader = PyPDFLoader(path)
+            docs = loader.load()
+
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=500,
+                chunk_overlap=100
+            )
+
+            chunks = splitter.split_documents(docs)
+
+            embeddings = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-MiniLM-L6-v2"
+            )
+
+            vectorstore = FAISS.from_documents(chunks, embeddings)
+
+            st.session_state.retriever = vectorstore.as_retriever()
+
+            st.success(f"Stored {len(chunks)} chunks!")
 
     st.markdown("---")
 
-    # List and manage documents
-    st.markdown("### 📚 Knowledge Base")
-    try:
-        documents = api_list_documents()
-        if documents:
-            for doc in documents:
-                col1, col2 = st.columns([3, 1])
-                col1.markdown(f"📄 `{doc}`")
-                if col2.button("🗑️", key=f"del_{doc}", help=f"Delete {doc}"):
-                    if api_delete_document(doc):
-                        st.success(f"Deleted {doc}")
-                        st.rerun()
-        else:
-            st.info("No documents uploaded yet")
-    except Exception:
-        st.warning("Could not fetch document list")
+    st.markdown("### ⚙️ System Settings")
 
-    st.markdown("---")
-    st.markdown("### ⚙️ Settings")
     st.markdown("""
-    | Setting | Value |
-    |---------|-------|
-    | LLM | LLaMA 3 8B (Groq) |
-    | Embeddings | MiniLM-L6-v2 |
-    | Chunk size | 500 chars |
-    | Re-rank top-k | 3 |
-    """)
+| Setting | Value |
+|--------|------|
+| LLM | LLaMA3 8B (Groq) |
+| Embeddings | MiniLM-L6-v2 |
+| Chunk Size | 500 |
+| Retrieval | FAISS |
+""")
 
-    if st.button("🗑️ Clear Chat", use_container_width=True):
+    if st.button("🗑 Clear Chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
 
-# ── Main chat area ────────────────────────────────────────────────
+# ── Main Chat UI ─────────────────────────────────────────────
 st.title("💬 Chat with Your Documents")
+
 st.markdown("Upload a document in the sidebar, then ask questions below.")
 
-# Display chat history
+
+# Show chat history
 for msg in st.session_state.messages:
+
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-        # Show sources for assistant messages
         if msg["role"] == "assistant" and msg.get("sources"):
-            with st.expander(f"📎 Sources ({len(msg['sources'])} chunks used)", expanded=False):
-                for src in msg["sources"]:
-                    st.markdown(f"""
-**Source {src['index']}** — `{src['filename']}` · Page {src['page']}
-> {src['snippet']}
-""")
+            with st.expander("📎 Sources"):
+                for s in msg["sources"]:
+                    st.markdown(f"> {s}")
 
 
-# Chat input
-if question := st.chat_input("Ask a question about your documents..."):
+# ── Chat Input ───────────────────────────────────────────────
+if question := st.chat_input("Ask a question about your document..."):
 
-    # Show user message
-    st.session_state.messages.append({"role": "user", "content": question})
+    st.session_state.messages.append({
+        "role": "user",
+        "content": question
+    })
+
     with st.chat_message("user"):
         st.markdown(question)
 
-    # Get answer from API
     with st.chat_message("assistant"):
-        with st.spinner("Searching documents and generating answer..."):
-            try:
-                result = api_query(question)
-                answer = result["answer"]
-                sources = result.get("sources", [])
+
+        if not st.session_state.retriever:
+
+            err = "⚠️ Please upload a document first."
+            st.error(err)
+
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": err
+            })
+
+        else:
+
+            with st.spinner("Searching document..."):
+
+                llm = ChatGroq(
+                    groq_api_key=st.secrets["GROQ_API_KEY"],
+                    model_name="llama3-8b-8192"
+                )
+
+                qa = RetrievalQA.from_chain_type(
+                    llm=llm,
+                    retriever=st.session_state.retriever,
+                    return_source_documents=True
+                )
+
+                result = qa({"query": question})
+
+                answer = result["result"]
+
+                sources = []
+                for doc in result["source_documents"]:
+                    sources.append(doc.page_content[:200] + "...")
 
                 st.markdown(answer)
 
-                # Show retrieval stats
-                col1, col2 = st.columns(2)
-                col1.metric("Chunks retrieved", result.get("num_chunks_retrieved", 0))
-                col2.metric("After re-ranking", result.get("num_chunks_after_rerank", 0))
-
-                # Show sources
                 if sources:
-                    with st.expander(f"📎 Sources ({len(sources)} chunks used)", expanded=True):
-                        for src in sources:
-                            st.markdown(f"""
-**Source {src['index']}** — `{src['filename']}` · Page {src['page']}
-> {src['snippet']}
-""")
+                    with st.expander(f"📎 Sources ({len(sources)})"):
+                        for s in sources:
+                            st.markdown(f"> {s}")
 
-                # Save to history
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": answer,
-                    "sources": sources,
+                    "sources": sources
                 })
-
-            except requests.exceptions.ConnectionError:
-                err = "❌ Cannot connect to API. Make sure the FastAPI server is running:\n```\nuvicorn src.api:app --reload\n```"
-                st.error(err)
-                st.session_state.messages.append({"role": "assistant", "content": err})
-
-            except Exception as e:
-                err = f"❌ Error: {str(e)}"
-                st.error(err)
-                st.session_state.messages.append({"role": "assistant", "content": err})
+```
