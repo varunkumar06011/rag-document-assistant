@@ -132,7 +132,7 @@ if question:
 
                 llm = ChatGroq(
                     groq_api_key=st.secrets["GROQ_API_KEY"],
-                    model_name="llama3-8b-8192"
+                    model_name="llama-3.1-8b-instant"
                 )
 
                 retriever = st.session_state.vectorstore.as_retriever()
